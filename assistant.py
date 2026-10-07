@@ -8,6 +8,9 @@ import threading
 import time
 import queue
 
+ASSISTANT_NAME = "jarvis"
+WAKE_WORDS = [ASSISTANT_NAME.lower()]
+
 # Try to import pvporcupine and sounddevice for wake word detection
 try:
     import pvporcupine
@@ -22,7 +25,7 @@ engine.setProperty('rate', 170)
 
 def speak(text):
     """Convert text to speech"""
-    print(f"Assistant: {text}")
+    print(f"{ASSISTANT_NAME}: {text}")
     engine.say(text)
     engine.runAndWait()
 
@@ -89,7 +92,8 @@ class WakeWordDetector:
                 raise ValueError("PICOVOICE_ACCESS_KEY not set")
         
         if keywords is None:
-            keywords = ["hey google", "hey assistant"]
+            keywords = WAKE_WORDS
+        self.keywords = keywords
         
         self.porcupine = pvporcupine.create(
             access_key=access_key,
@@ -123,7 +127,7 @@ class WakeWordDetector:
                 audio_data = self.audio_queue.get()
                 result = self.porcupine.process(audio_data)
                 if result >= 0:
-                    keyword = ["hey google", "hey assistant"][result] if result < len(["hey google", "hey assistant"]) else "wake word"
+                    keyword = self.keywords[result] if result < len(self.keywords) else "wake word"
                     print(f"Wake word detected: {keyword}")
                     if self.wake_word_callback:
                         self.wake_word_callback()
@@ -134,26 +138,35 @@ class WakeWordDetector:
     def cleanup(self):
         self.porcupine.delete()
 
-# Fallback: Simple keyword detection using speech recognition
+# Fallback: Simple keyword detection using sounddevice + speech_recognition
 def simple_wake_word_detection():
-    """Simple wake word detection using speech recognition"""
+    """Simple wake word detection using sounddevice for audio capture"""
     recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("\nSay 'Hey Assistant' to activate...")
-        recognizer.adjust_for_ambient_noise(source, duration=0.5)
-        try:
-            audio = recognizer.listen(source, timeout=5, phrase_time_limit=3)
-            text = recognizer.recognize_google(audio).lower()
-            print(f"Heard: {text}")
-            if "hey assistant" in text or "hey google" in text:
-                return True
-        except:
-            pass
+    print(f"\nSay '{ASSISTANT_NAME}' to activate...")
+    
+    # Record audio using sounddevice
+    duration = 3
+    sample_rate = 16000
+    recording = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16')
+    sd.wait()
+    
+    # Convert to speech_recognition AudioData
+    audio_data = sr.AudioData(recording.tobytes(), sample_rate, 2)  # 2 bytes per sample for int16
+    
+    try:
+        text = recognizer.recognize_google(audio_data).lower()
+        print(f"Heard: {text}")
+        if ASSISTANT_NAME.lower() in text:
+            return True
+    except sr.UnknownValueError:
+        pass
+    except sr.RequestError:
+        print("Network error for speech recognition")
     return False
 
 # Main Loop
 if __name__ == "__main__":
-    speak("Voice assistant activated. How can I help you?")
+    speak(f"Hello Boss! I am {ASSISTANT_NAME}. How can I help you?")
     
     # Try to use pvporcupine for wake word detection
     use_pvporcupine = False
@@ -190,8 +203,11 @@ if __name__ == "__main__":
             detector.cleanup()
     else:
         # Fallback to simple wake word detection
+        print("Starting simple wake word detection loop...")
         while True:
+            print("Waiting for wake word...")
             if simple_wake_word_detection():
+                print("Wake word detected!")
                 speak("Yes?")
                 command = listen()
                 if command:
